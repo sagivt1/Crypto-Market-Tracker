@@ -1,0 +1,17 @@
+# Ignore common build output directories used by various build systems and IDEs.
+build/
+out/
+
+# Ignore the directory CMake uses for out-of-source builds. The wildcard (*) covers different configurations (e.g., cmake-build-debug).
+cmake-build-*/
+
+# Ignore IDE-specific configuration and metadata files.
+# Visual Studio Code
+.vscode/
+# CLion / IntelliJ
+.idea/
+# Visual Studio user-specific settings
+*.user
+
+# Ignore Python cache directories, often generated if you use Python scripts in your workflow.
+__pycache__/
