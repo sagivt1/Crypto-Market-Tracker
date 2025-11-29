@@ -8,6 +8,7 @@ cmake-build-*/
 # Ignore IDE-specific configuration and metadata files.
 # Visual Studio Code
 .vscode/
+
 # CLion / IntelliJ
 .idea/
 # Visual Studio user-specific settings
@@ -15,3 +16,7 @@ cmake-build-*/
 
 # Ignore Python cache directories, often generated if you use Python scripts in your workflow.
 __pycache__/
+
+*.pdb
+
+*.ini
