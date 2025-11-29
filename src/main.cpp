@@ -1,6 +1,8 @@
+
 #include "market_client.hpp"
 #include <imgui.h>
 #include <imgui-SFML.h>
+#include <implot.h>
 #include <SFML/Graphics.hpp>
 #include <SFML/System/Clock.hpp>
 #include <SFML/Window/Event.hpp>
@@ -23,11 +25,18 @@ int main() {
         return 1;
     }
 
+    // Initialize Plotting Context
+    ImPlot::CreateContext();
+
     // --- Application State ---
+    // client: An instance of MarketClient used to interact with the cryptocurrency API.
     MarketClient client;
-    double btc_price = 0.0;
+    // current_data: Stores the latest fetched data for a coin, including price and history.
+    CoinData current_data;
+    // status: A string to display the current state of the application.
     std::string status = "Ready";
-    sf::Clock deltaClock;
+    // delta_clock: An SFML clock to measure the time elapsed between frames, used by ImGui for animations.
+    sf::Clock delta_clock;
 
     // futureResult: Holds the result of the asynchronous network call to fetch coin data.
     std::future<std::optional<CoinData>> futureResult;
@@ -51,56 +60,69 @@ int main() {
 
         // --- GUI Update & Drawing ---
         // Tell ImGui to start a new frame. The delta time is used for animations and timing-dependent operations.
-        ImGui::SFML::Update(window, deltaClock.restart());
+        ImGui::SFML::Update(window, delta_clock.restart());
 
         // Check if we are waiting for data from the network.
         if(is_loading) {
             // Check if the future has a result available without blocking.
             if(futureResult.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
                 
-                // Retrieve the result from the future. This call is now non-blocking.
+                // Retrieve the result from the future. This call is now guaranteed not to block.
                 auto result = futureResult.get();
 
                 // If the result is valid (i.e., not std::nullopt), update the price and status.
                 if(result) {
-                    btc_price = result->current_price;
-                    status = "Updated: " + result->id;
+                    current_data = *result;
+                    status = "Updated: " + current_data.id;
                 } else {
                     // If there was an error (e.g., network issue), update the status to reflect that.
                     status = "Network Error";
                 }
-
                 is_loading = false;
             }
         }
 
 
         // Begin defining a new ImGui window. All subsequent ImGui calls will add elements to this window.
-        ImGui::Begin("Dashboard"); // Start a new window in the app
+        ImGui::Begin("Market Analysis", nullptr); // Start a new window in the app
         // Add text and a separator to the ImGui window.
-        ImGui::Text("Bitcoin Tracker (Async)");
+        ImGui::Text("Bitcoin (BTC/USD)");
         ImGui::Separator();
 
         // Conditionally display the price: show the value if it's been fetched, otherwise show a placeholder.
-        if (btc_price > 0.0) {
-            ImGui::Text("BTC: $%.2f", btc_price);
+        if (current_data.current_price > 0.0) {
+            ImGui::Text("BTC: $%.2f", current_data.current_price);
         } else {
             ImGui::Text("BTC: ---");
+        }
+
+        // If historical price data is available, create a plot.
+        if(!current_data.price_history.empty()) {
+            if(ImPlot::BeginPlot("24h Trend")) {
+                ImPlot::PlotLine(
+                    "Price",
+                    current_data.price_history.data(),
+                    current_data.price_history.size()
+                );
+                ImPlot::EndPlot();
+            }
         }
 
         // Add vertical spacing for better layout.
         ImGui::Spacing();
 
         if(is_loading) {
-            ImGui::Text("Loading Data...");
+            ImGui::Text("Downloading historical data...");
         } else {
             // If not loading, display a button that the user can click.
-            if(ImGui::Button("Fetch Price Now")) {
+            if(ImGui::Button("Fetch Data")) {
                 // When the button is clicked, update the status and set the loading flag.
                 status = "Fetching in background...";
                 is_loading = true;
                 // Launch an asynchronous task to fetch the coin price. This runs in a separate thread.
-                futureResult = std::async(std::launch::async, &MarketClient::get_coin_price, &client, "bitcoin");
+                // `std::async` returns a `std::future` which will hold the result of the function call.
+                // `std::launch::async` ensures the task runs on a new thread, preventing UI freezes.
+                futureResult = std::async(std::launch::async, &MarketClient::get_coin_data, &client, "bitcoin");
             }
         }
 
@@ -119,6 +141,7 @@ int main() {
         window.display();
     }
     // --- Shutdown ---
+    ImPlot::DestroyContext();
     // Clean up ImGui-SFML resources before the application exits.
     ImGui::SFML::Shutdown();
     return 0;

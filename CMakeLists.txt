@@ -18,6 +18,8 @@ find_package(nlohmann_json REQUIRED)
 find_package(sfml REQUIRED)
 find_package(imgui REQUIRED)
 find_package(imgui-sfml REQUIRED)
+find_package(implot REQUIRED)
+
 
 
 # --- Core Library ---
@@ -38,7 +40,8 @@ target_link_libraries(core_lib
     sfml-window 
     sfml-system
     imgui::imgui
-    ImGui-SFML::ImGui-SFML  # <--- THIS IS THE FIX. MUST BE ImGui-SFML::ImGui-SFML
+    ImGui-SFML::ImGui-SFML
+    implot::implot
 )
 
 # --- Main Executable ---
