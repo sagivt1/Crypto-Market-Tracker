@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <print>
 #include <format>
+#include <iostream>
+
 
 using json = nlohmann::json;
 
@@ -39,6 +41,9 @@ std::vector<double> MarketClient::parse_history(const std::string& json_body) {
 }
 
 std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) {
+
+    std::println("Fetching data for: {}", coin_id); // DEBUG PRINT
+
     // Construct API URL
     std::string url = std::format("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", coin_id);
 
@@ -46,6 +51,7 @@ std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) 
     cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
 
     if(r.status_code != 200) {
+        std::println(stderr, "Price Error [{}]: Status {}", coin_id, r.status_code);
         return std::nullopt;
     }
     auto basic_data = parse_coin_price(r.text, coin_id);
@@ -55,7 +61,10 @@ std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) 
     cpr::Response history_r = cpr::Get(cpr::Url{history_url}, cpr::VerifySsl(false));
     if(history_r.status_code == 200) {
         basic_data->price_history = parse_history(history_r.text);
-    
+        std::println("Success! Got {} history points.", basic_data->price_history.size());
+    }
+    else {
+        std::println(stderr, "History Error [{}]: Status {}", coin_id, history_r.status_code);
     }
     
     return basic_data;
