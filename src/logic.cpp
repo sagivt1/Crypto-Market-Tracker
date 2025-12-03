@@ -7,7 +7,7 @@ std::string MarketConfig::get_app_version() {
 
 int MarketConfig::calculate_dummy_value(int a, int b) {
     if(b == 0) {
-        // Example of handling exceptions as requested
+        // Throwing an exception here demonstrates robust error handling for invalid inputs.
         throw std::invalid_argument("Cannot divide by zero");
     } else {
         return a / b;

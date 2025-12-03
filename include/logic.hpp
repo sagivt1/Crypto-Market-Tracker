@@ -1,12 +1,12 @@
 #pragma once
 #include <string>
 
-// A simple class to verify our build system and testing logic
+/// @brief A utility class for application configuration and build verification.
+/// Provides static methods for retrieving app info and performing sample logic.
 class MarketConfig {
 public:
-    // Declaration for a static method to retrieve the application's version string.
+    /// @brief Gets the application's version string.
     static std::string get_app_version();
-    // Declaration for a static method to perform a sample calculation.
+    /// @brief Performs a sample calculation, used for unit testing the build.
     static int calculate_dummy_value(int a, int b);
 };
-
