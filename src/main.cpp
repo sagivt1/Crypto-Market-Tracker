@@ -8,8 +8,8 @@
 #include <SFML/Window/Event.hpp>
 #include <nlohmann/json.hpp>
 #include <chrono>
-#include <thread>
 #include <future>
+#include <vector>
 #include <iostream>
 #include <format>
 #include <fstream>
@@ -93,15 +93,26 @@ int main() {
 
     std::map<std::string, double> portfolio = load_portfolio();
 
-    int selected_index = 0;
+    int selected_index = -1;
 
     // --- Asynchronous Data Fetching State ---
     std::future<std::optional<CoinData>> futureResult;
     bool is_loading = true; // Tracks if a network request is in-flight to prevent duplicate requests.
     bool should_reset_axes = false; // Triggers the plot to rescale after new data arrives.
 
-    // Immediately fetch data for the default coin on startup.
-    futureResult =std::async(std::launch::async, &MarketClient::get_coin_data, &client, coins[selected_index].api_id);
+    std::future<std::optional<CoinData>> futureCoin;
+    std::future<std::map<std::string, double>> futureBatch;
+
+    std::vector<const char*> pieLabels;
+    std::vector<double> pieValue;
+    double totalNetWorth = 0.0;
+
+    // Initial: Fetch Batch Prices for Overview
+    std::vector<std::string> allIds;
+    for(auto const& coin : coins) {
+        allIds.push_back(coin.api_id);
+    }
+    futureBatch = std::async(std::launch::async, &MarketClient::get_multi_price, &client, allIds);
 
     // --- Main Application Loop ---
     while(window.isOpen()) {
@@ -121,20 +132,42 @@ int main() {
         // Restart the clock and inform ImGui of the time delta for animations and UI responsiveness.
         ImGui::SFML::Update(window, delta_clock.restart());
 
-        // Poll the future to see if the async data fetch has completed.
-        if(is_loading) {
-            // Use a zero-second wait to check the status without blocking the main thread.
-            if(futureResult.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto result = futureResult.get();
-                if(result) {
-                    current_data = *result;
-                    status = "Updated: " + current_data.id;
+        if(futureBatch.valid()) {
+            if(futureBatch.wait_for(0s) == std::future_status::ready) {
+                
+                auto price = futureBatch.get();
 
-                    // Signal the plot to auto-fit the new data on the next frame.
-                    should_reset_axes = true;
-                } else {
-                    // The API call failed; inform the user via the status bar.
-                    status = "Network Error";
+                pieLabels.clear();
+                pieValue.clear();
+                totalNetWorth = 0.0;
+
+                for(int i=0; i<coins.size(); i++) {
+                    double amount = portfolio[coins[i].api_id];
+                    if(amount > 0.00001) {
+                        double val = amount * price[coins[i].api_id];
+                        pieLabels.push_back(coins[i].ticker.c_str());
+                        pieValue.push_back(val);
+                        totalNetWorth += val;
+                    }
+                }
+                
+                status = "Portfolio Synced.";
+                is_loading = false;
+            }
+        } 
+
+
+        if(futureCoin.valid()) {
+            if(futureCoin.wait_for(0s) == std::future_status::ready) {
+                try {
+                    auto result = futureCoin.get();
+                    if(result) {
+                        current_data = result.value();
+                        status = "Updated: " + coins[selected_index].name;
+                        should_reset_axes = true;
+                    }
+                } catch (...) {
+                    status = "Error";
                 }
                 is_loading = false;
             }
@@ -153,101 +186,118 @@ int main() {
             ImGui::TableSetupColumn("Assets", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Analysis", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            
+            if(ImGui::Selectable(" PORTFOLIO OVERVIEW", selected_index == -1)) {
+                selected_index = -1;
+                is_loading = true;
+                status = "Updating Total Balance...";
+                futureBatch = std::async(std::launch::async, &MarketClient::get_multi_price, &client, allIds);
+            }
+
             // --- Column 1: Coin Selection ---
             
-            ImGui::TableSetColumnIndex(0);
+            ImGui::Spacing();
             ImGui::TextDisabled("COINS");
             ImGui::Separator();
 
-            for(int i = 0; i < coins.size(); i++) {
-                bool is_selected = (selected_index == i);
-
-                std::string label = std::format("{} ({})", coins[i].name, coins[i].ticker);
-
-                // If the user selects a different coin, trigger a new data fetch.
-                if(ImGui::Selectable(label.c_str(), is_selected)) {
-                    selected_index = i;
-
-                    is_loading = true;
-                    status = "Fetching " + coins[i].name + "...";
-                    // Clear old data immediately for a responsive feel.
-                    current_data.price_history.clear();
-                    current_data.current_price = 0.0;
-
-                    // Launch a non-blocking task to fetch new coin data in the background.
-                    futureResult = std::async(std::launch::async, &MarketClient::get_coin_data, &client, coins[i].api_id);
+            for(int i=0; i<coins.size(); i++) {
+                double amount = portfolio[coins[i].api_id];
+                std::string label = amount > 0.00001 ? std::format("{} ({:.2f})", coins[i].name, amount) : coins[i].name;
+                
+                if(ImGui::Selectable(label.c_str(), selected_index == i)) {
+                    if(selected_index != i && !is_loading) {
+                        selected_index = i;
+                        is_loading = true;
+                        status = "Fetching " + coins[i].name;
+                        current_data.price_history.clear();
+                        current_data.current_price = 0.0;
+                        futureCoin = std::async(std::launch::async, &MarketClient::get_coin_data, &client, coins[i].api_id);   
+                    }
                 }
             }
 
             // --- Column 2: Main Content (Price & Chart) ---
             ImGui::TableSetColumnIndex(1);
 
-            ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s (%s)", coins[selected_index].name.c_str(), coins[selected_index].ticker.c_str());
-            ImGui::Separator();
-            
-            if(is_loading) {
-                // Center the loading text for better visual presentation.
-                ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x * 0.5f, ImGui::GetWindowSize().y * 0.4f));
-                ImGui::Text("Loading Market Data..");
-            } else {
-                if(current_data.current_price > 0.0) {
-                    ImGui::SetWindowFontScale(2.5f);
-                    ImGui::Text("$%.2f", current_data.current_price);
-                    ImGui::SetWindowFontScale(1.5f);
-                } else {
-                    ImGui::Text("---");
-                }
+            if(selected_index == -1) {
+                ImGui::TextColored(ImVec4(0, 1, 0, 1), "Total Worth Net");
+                ImGui::SetWindowFontScale(3.0f);
+                ImGui::Text("$%.2f", totalNetWorth);
+                ImGui::SetWindowFontScale(1.0f);
 
+                ImGui::Separator();
                 ImGui::Spacing();
 
-                if(!current_data.price_history.empty()) {
-                    // Auto-fit the plot axes exactly once when new data arrives.
-                    if(should_reset_axes) {
-                        ImPlot::SetNextAxesToFit();
-                        should_reset_axes = false;
-                    }
-                    if(ImPlot::BeginPlot("24 Hours Trend", ImVec2(-1, 350))) {
-                        ImPlot::PlotLine("Price (USD)", 
-                            current_data.price_history.data(),
-                            current_data.price_history.size()
+                if(pieValue.empty()) {
+                    ImGui::TextDisabled("No assets found. Select a coin to add holdings.");
+                } else {
+                    ImGui::Text("Asset Allocation");
+
+                    if(ImPlot::BeginPlot("##Pie", ImVec2(-1, -1), ImPlotFlags_Equal | ImPlotFlags_NoMouseText)) {
+                        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
+                        ImPlot::PlotPieChart(
+                            pieLabels.data(), 
+                            pieValue.data(), 
+                            (int)pieValue.size(), 
+                            0.5, 0.5, 0.35,         
+                            "%.1f", 90 
                         );
                         ImPlot::EndPlot();
                     }
+                }
+
+            } else {
+
+                ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s (%s)", coins[selected_index].name.c_str(), coins[selected_index].ticker.c_str());
+                ImGui::Separator();
+                
+                if(is_loading && futureCoin.valid()) {
+
+                    ImGui::Text("Loading Data");
                 } else {
-                    ImGui::TextColored(ImVec4(1, 0, 0, 1), "No chart data available.");
-                }  
-            }
-            
-            ImGui::Separator();
+                    if(current_data.current_price > 0.0) {
+                        ImGui::SetWindowFontScale(2.5f);
+                        ImGui::Text("$%.2f", current_data.current_price);
+                        ImGui::SetWindowFontScale(1.0f);
+                    }
 
-            // Holding
-            ImGui::TextDisabled("PORTFOLIO");
-            double owned_amount = portfolio[coins[selected_index].api_id];
+                    if(!current_data.price_history.empty()) {
+                        if(should_reset_axes) {
+                            ImPlot::SetNextAxesToFit();
+                            should_reset_axes = false;
+                        }
 
-            ImGui::Text("Amount Owned:");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150);
+                        if(ImPlot::BeginPlot("24H Trend", ImVec2(-1, 350))) {
+                            ImPlot::PlotLine("Price (USD)", current_data.price_history.data(), current_data.price_history.size());
+                            ImPlot::EndPlot();
+                        }
+                    }
 
-            if(ImGui::InputDouble("##Edit", &owned_amount, 0.0, 0.0, "%.6f")) {
-                // Ensure the portfolio amount cannot be negative.
-                if(owned_amount < 0) 
-                    owned_amount = 0;
-                portfolio[coins[selected_index].api_id] = owned_amount;
-                save_portfolio(portfolio);
-            }
-
-            if(current_data.current_price > 0.0) {
-                ImGui::SameLine();
-                ImGui::Text("= $%.2f USD", owned_amount * current_data.current_price);
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Portfolio");
+                    double ownedAmount = portfolio[coins[selected_index].api_id];
+                    ImGui::Text("Amount Owned");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(150);
+                    if(ImGui::InputDouble("##Edit", &ownedAmount  , 0.0, 0.0, "%.6f")) {
+                        if (ownedAmount < 0.0)
+                        {
+                            ownedAmount = 0.0;
+                        }
+                        portfolio[coins[selected_index].api_id] = ownedAmount;
+                        save_portfolio(portfolio);     
+                    }
+                    if(current_data.current_price > 0) {
+                        ImGui::SameLine();
+                        ImGui::Text("$%.2f", ownedAmount * current_data.current_price);
+                    }
+                }
             }
 
             ImGui::EndTable();
         }
-        
-        // --- STATUS BAR ---
-        ImGui::SetCursorPosY(ImGui::GetWindowSize().y - 30);
-        ImGui::Separator();
-        ImGui::TextDisabled("Status: %s", status.c_str()); // Use disabled text for less visual emphasis.
                 
         ImGui::End(); 
 

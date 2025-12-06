@@ -8,6 +8,43 @@
 
 using json = nlohmann::json;
 
+std::map<std::string, double> MarketClient::get_multi_price(const std::vector<std::string>& coin_ids) {
+    std::string joinsIds = "";
+    for( auto const& id : coin_ids) {
+        if(!joinsIds.empty())
+            joinsIds += ",";
+        joinsIds += id;
+    }
+
+    std::println("Batch fetching : {}", joinsIds);
+
+    std::string url = std::format("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", joinsIds);
+    cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
+
+    if(r.status_code == 200) {
+        return parse_multi_price(r.text);
+    } 
+    
+    std::println(stderr, "Price Error: Status {}", r.status_code);
+    return {};
+
+}
+
+std::map<std::string, double> MarketClient::parse_multi_price(const std::string& json_body) {
+    std::map<std::string, double> results;
+    try {
+        auto parsed = json::parse(json_body);
+        for(auto& [key, value] : parsed.items()) {
+            if(value.contains("usd")) {
+                results[key] = value["usd"];
+            }
+        }
+
+    } catch(...) {}
+
+    return results;
+}
+
 std::optional<CoinData> MarketClient::parse_coin_price(const std::string& json_body, const std::string& coin_id) {
     try {
         auto parsed = json::parse(json_body);

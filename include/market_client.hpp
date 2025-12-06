@@ -2,6 +2,7 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <map>
 
 /// @brief Holds all relevant data for a single cryptocurrency.
 struct CoinData
@@ -29,4 +30,8 @@ public:
     /// @param coin_id The API identifier for the coin.
     /// @return A complete CoinData object, or nullopt on network/API failure.
     std::optional<CoinData> get_coin_data(const std::string& coin_id);
+
+    std::map<std::string, double> get_multi_price(const std::vector<std::string>& coin_ids);
+
+    std::map<std::string, double> parse_multi_price(const std::string& json_body);
 };

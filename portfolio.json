@@ -1,5 +1,9 @@
 {
     "bitcoin": 1.0,
+    "cardano": 0.0,
     "dogecoin": 0.0,
-    "ethereum": 25.0
+    "ethereum": 25.0,
+    "polkadot": 1500.0,
+    "ripple": 0.0,
+    "solana": 0.0
 }
