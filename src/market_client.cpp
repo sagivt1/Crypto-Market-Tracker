@@ -10,15 +10,18 @@ using json = nlohmann::json;
 
 std::map<std::string, double> MarketClient::get_multi_price(const std::vector<std::string>& coin_ids) {
     std::string joinsIds = "";
+    // The CoinGecko API requires a comma-separated string of coin IDs for batch requests.
     for( auto const& id : coin_ids) {
         if(!joinsIds.empty())
             joinsIds += ",";
         joinsIds += id;
     }
 
-    std::println("Batch fetching : {}", joinsIds);
+    std::println("Batch fetching : {}", joinsIds); // DEBUG
 
     std::string url = std::format("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", joinsIds);
+    
+    // WARNING: Disabling SSL verification is insecure. For production, use a proper certificate bundle.
     cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
 
     if(r.status_code == 200) {
@@ -40,7 +43,9 @@ std::map<std::string, double> MarketClient::parse_multi_price(const std::string&
             }
         }
 
-    } catch(...) {}
+    } catch(...) {
+        // Silently fail on parse error. The caller is expected to handle an empty map.
+    }
 
     return results;
 }
@@ -82,12 +87,12 @@ std::vector<double> MarketClient::parse_history(const std::string& json_body) {
 
 std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) {
 
-    std::println("Fetching data for: {}", coin_id); // DEBUG PRINT
+    std::println("Fetching data for: {}", coin_id); // DEBUG
 
-    // Construct API URL
     std::string url = std::format("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", coin_id);
 
-    // This is a blocking network call. It's intended to be run in a separate thread.
+    // This is a blocking network call, intended to be run in a separate thread.
+    // WARNING: Disabling SSL verification is insecure. For production, use a proper certificate bundle.
     cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
 
     if(r.status_code != 200) {
@@ -98,17 +103,60 @@ std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) 
     auto basic_data = parse_coin_price(r.text, coin_id);
     if(!basic_data) return std::nullopt;
 
-    // If current price is fetched, proceed to get the 24-hour historical data.
+    // If price is fetched, proceed to get 24-hour historical data.
     std::string history_url = std::format("https://api.coingecko.com/api/v3/coins/{}/market_chart?vs_currency=usd&days=1", coin_id);
     cpr::Response history_r = cpr::Get(cpr::Url{history_url}, cpr::VerifySsl(false));
     if(history_r.status_code == 200) {
-        // If history fetch is successful, append it to our data object.
         basic_data->price_history = parse_history(history_r.text);
-        std::println("Success! Got {} history points.", basic_data->price_history.size());
+        std::println("Success! Got {} history points.", basic_data->price_history.size()); // DEBUG
     }
     else {
         std::println(stderr, "History Error [{}]: Status {}", coin_id, history_r.status_code);
     }
     
     return basic_data;
+}
+
+std::vector<CoinDef> MarketClient::parse_search_result(const std::string& json_body) {
+    std::vector<CoinDef> results;
+    try {
+        auto parsed = json::parse(json_body);
+        if(parsed.contains("coins")) {
+            for(auto const& coin : parsed["coins"]) {
+                CoinDef def;
+
+                def.api_id = coin["id"];
+                def.name = coin["name"];
+                def.ticker = coin["symbol"];
+
+                // Standardize ticker to uppercase for display consistency.
+                for(auto& c : def.ticker) {
+                    c = toupper(c);
+                }
+
+                // Ensure the coin has a valid API ID before adding it to results.
+                if(!def.api_id.empty()) {
+                    results.push_back(def);
+                }
+            }
+        }
+    } catch(...) {
+        // Silently fail on parse error, returning whatever was parsed so far.
+    }
+    return results;
+}
+
+std::vector<CoinDef> MarketClient::search_coins(const std::string& query) {
+    std::println("Searching for: {}", query); // DEBUG
+
+    std::string url = std::format("https://api.coingecko.com/api/v3/search?query={}", query);
+    // WARNING: Disabling SSL verification is insecure. For production, use a proper certificate bundle.
+    cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
+
+    if(r.status_code == 200) {
+        return parse_search_result(r.text);
+    }
+
+    std::println(stderr, "Search Error: Status {}", r.status_code);
+    return {};
 }

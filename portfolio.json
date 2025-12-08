@@ -1,9 +1,10 @@
 {
-    "bitcoin": 1.0,
+    "bitcoin": 0.0,
     "cardano": 0.0,
+    "cosmos": 1500.0,
     "dogecoin": 0.0,
-    "ethereum": 25.0,
-    "polkadot": 1500.0,
-    "ripple": 0.0,
+    "ethereum": 0.0,
+    "polkadot": 0.0,
+    "ripple": 20000.0,
     "solana": 0.0
 }

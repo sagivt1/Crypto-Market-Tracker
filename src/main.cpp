@@ -18,12 +18,52 @@
 using namespace std::chrono_literals;
 using json = nlohmann::json;
 
-/// @brief Maps a user-facing coin name to its API identifier.
-struct CoinDef {
-    std::string name;   // User-friendly name for display, e.g., "Bitcoin".
-    std::string ticker; // Common abbreviation, e.g., "BTC".
-    std::string api_id; // Unique ID for the CoinGecko API, e.g., "bitcoin".
-};
+void save_coins(const std::vector<CoinDef>& coins) {
+    try{
+        json j  = json::array();
+        for(auto const& coin : coins) {
+            j.push_back({
+                {"name", coin.name},
+                {"ticker", coin.ticker},
+                {"api_id", coin.api_id}
+            });
+        }
+        std::ofstream file("coins.json");
+        file << j.dump(4); // Use 4-space indentation for readability.
+    } catch(...) {} // Silently fail on file I/O error; not a critical operation.
+}
+
+std::vector<CoinDef> load_coins() {
+    std::vector<CoinDef> coins;
+    try {
+            std::ifstream file("coins.json");
+            
+            if(file.is_open()) {
+                json j;
+                file >> j;
+                for(auto const& coin : j) { 
+                    coins.push_back({
+                        coin["name"],
+                        coin["ticker"],
+                        coin["api_id"]
+                    });
+                }
+            }
+        } catch(...) {} // Silently fail on parse/read error.
+
+    if(coins.empty()) {
+        // If no file exists or it's empty, provide a default list for first-time users.
+        coins = {
+        {"Bitcoin",  "BTC", "bitcoin"},
+        {"Ethereum", "ETH", "ethereum"},
+        {"Solana",   "SOL", "solana"},
+        {"Dogecoin", "DOGE","dogecoin"},
+        {"Cardano",  "ADA", "cardano"},
+        {"Polkadot", "DOT", "polkadot"}
+        };
+    }
+    return coins;
+}
 
 /// @brief Persists the user's asset holdings to a JSON file.
 /// @param portfolio A map of coin API IDs to the amount owned.
@@ -54,7 +94,7 @@ std::map<std::string, double> load_portfolio() {
             }
         }
     } catch (...) {
-        // Silently fail if the file is corrupt or missing; a new one will be created on the next save.
+        // Fail silently if file is corrupt/missing; a new one is created on next save.
         std::cerr << "Error loading portfolio - No portfolio found (creating new file). \n";
     }
     return portfolio;
@@ -81,38 +121,34 @@ int main() {
     std::string status = "Ready";
     sf::Clock delta_clock;
 
-    std::vector<CoinDef> coins = {
-        {"Bitcoin",  "BTC", "bitcoin"},
-        {"Ethereum", "ETH", "ethereum"},
-        {"Solana",   "SOL", "solana"},
-        {"Dogecoin", "DOGE","dogecoin"},
-        {"Cardano",  "ADA", "cardano"},
-        {"Ripple",   "XRP", "ripple"},
-        {"Polkadot", "DOT", "polkadot"}
-    };
-
+    std::vector<CoinDef> coins = load_coins();
     std::map<std::string, double> portfolio = load_portfolio();
 
     int selected_index = -1;
-
-    // --- Asynchronous Data Fetching State ---
-    std::future<std::optional<CoinData>> futureResult;
     bool is_loading = true; // Tracks if a network request is in-flight to prevent duplicate requests.
     bool should_reset_axes = false; // Triggers the plot to rescale after new data arrives.
 
+    // Futures for managing non-blocking network calls.
     std::future<std::optional<CoinData>> futureCoin;
     std::future<std::map<std::string, double>> futureBatch;
+    std::future<std::vector<CoinDef>> futureSearch;
 
     std::vector<const char*> pieLabels;
     std::vector<double> pieValue;
     double totalNetWorth = 0.0;
 
-    // Initial: Fetch Batch Prices for Overview
+    // Initial data fetch for the portfolio overview.
     std::vector<std::string> allIds;
     for(auto const& coin : coins) {
         allIds.push_back(coin.api_id);
     }
     futureBatch = std::async(std::launch::async, &MarketClient::get_multi_price, &client, allIds);
+
+    char search_buffer[128] = "";
+    std::vector<CoinDef> search_results;
+    bool is_searching = false;
+
+    bool openSearchPopup = false; // One-shot flag to trigger the search popup.
 
     // --- Main Application Loop ---
     while(window.isOpen()) {
@@ -132,45 +168,46 @@ int main() {
         // Restart the clock and inform ImGui of the time delta for animations and UI responsiveness.
         ImGui::SFML::Update(window, delta_clock.restart());
 
-        if(futureBatch.valid()) {
-            if(futureBatch.wait_for(0s) == std::future_status::ready) {
-                
-                auto price = futureBatch.get();
-
-                pieLabels.clear();
-                pieValue.clear();
-                totalNetWorth = 0.0;
-
-                for(int i=0; i<coins.size(); i++) {
-                    double amount = portfolio[coins[i].api_id];
-                    if(amount > 0.00001) {
-                        double val = amount * price[coins[i].api_id];
-                        pieLabels.push_back(coins[i].ticker.c_str());
-                        pieValue.push_back(val);
-                        totalNetWorth += val;
-                    }
+        // Poll the future without blocking the main thread.
+        if(futureBatch.valid() && futureBatch.wait_for(0s) == std::future_status::ready) {    
+            auto price = futureBatch.get();
+            pieLabels.clear();
+            pieValue.clear();
+            totalNetWorth = 0.0;
+            for(int i=0; i<coins.size(); i++) {
+                double amount = portfolio[coins[i].api_id];
+                // Filter out dust amounts to keep the pie chart clean.
+                if(amount > 0.00001) {
+                    double val = amount * price[coins[i].api_id];
+                    pieLabels.push_back(coins[i].ticker.c_str());
+                    pieValue.push_back(val);
+                    totalNetWorth += val;
                 }
-                
-                status = "Portfolio Synced.";
-                is_loading = false;
             }
+            
+            status = "Portfolio Synced.";
+            is_loading = false;  
         } 
 
-
-        if(futureCoin.valid()) {
-            if(futureCoin.wait_for(0s) == std::future_status::ready) {
-                try {
-                    auto result = futureCoin.get();
-                    if(result) {
-                        current_data = result.value();
-                        status = "Updated: " + coins[selected_index].name;
-                        should_reset_axes = true;
-                    }
-                } catch (...) {
-                    status = "Error";
+        // Poll the future for single-coin data.
+        if(futureCoin.valid() && futureCoin.wait_for(0s) == std::future_status::ready) {
+            try {
+                auto result = futureCoin.get();
+                if(result.has_value()) {
+                    current_data = result.value();
+                    status = "Updated: " + coins[selected_index].name;
+                    should_reset_axes = true;
                 }
-                is_loading = false;
+            } catch (...) {
+                status = "Error";
             }
+            is_loading = false;  
+        }
+
+        // Poll the future for search results.
+        if(futureSearch.valid() && futureSearch.wait_for(0s) == std::future_status::ready) {
+            search_results = futureSearch.get();
+            is_searching = false;
         }
 
         // --- DASHBOARD LAYOUT ---
@@ -186,9 +223,15 @@ int main() {
             ImGui::TableSetupColumn("Assets", ImGuiTableColumnFlags_WidthFixed, 150.0f);
             ImGui::TableSetupColumn("Analysis", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableNextRow();
-
             ImGui::TableSetColumnIndex(0);
-            
+
+            if(ImGui::Button("+ ADD COIN ", ImVec2(-1, 30))) {
+                openSearchPopup = true;
+            }
+
+            ImGui::Separator();
+
+            // A selected index of -1 is used as a sentinel for the main portfolio overview.
             if(ImGui::Selectable(" PORTFOLIO OVERVIEW", selected_index == -1)) {
                 selected_index = -1;
                 is_loading = true;
@@ -204,9 +247,10 @@ int main() {
 
             for(int i=0; i<coins.size(); i++) {
                 double amount = portfolio[coins[i].api_id];
-                std::string label = amount > 0.00001 ? std::format("{} ({:.2f})", coins[i].name, amount) : coins[i].name;
+                std::string label = amount > 0.00001 ? std::format("{} ({:.2f})", coins[i].ticker, amount) : coins[i].ticker;
                 
                 if(ImGui::Selectable(label.c_str(), selected_index == i)) {
+                    // Prevent re-fetching data for the same selection or while another request is active.
                     if(selected_index != i && !is_loading) {
                         selected_index = i;
                         is_loading = true;
@@ -247,12 +291,35 @@ int main() {
                         ImPlot::EndPlot();
                     }
                 }
-
             } else {
-
+                CoinDef& c = coins[selected_index];
                 ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s (%s)", coins[selected_index].name.c_str(), coins[selected_index].ticker.c_str());
-                ImGui::Separator();
+                ImGui::SameLine();
                 
+                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 100);
+                if(ImGui::Button("Delete Coin")) {
+                    portfolio.erase(c.api_id);
+                    save_portfolio(portfolio);
+
+                    coins.erase(coins.begin() + selected_index);
+                    save_coins(coins);
+
+                    selected_index = -1;
+                }
+
+                // After deletion, the selected index is invalid.
+                // Bail out of this frame to prevent rendering with stale data.
+                if(selected_index == -1) {
+                    ImGui::EndTable();
+                    ImGui::End();
+                    window.clear();
+                    ImGui::SFML::Render(window);
+                    window.display();
+                    continue;
+                }
+                
+                ImGui::Separator();
+
                 if(is_loading && futureCoin.valid()) {
 
                     ImGui::Text("Loading Data");
@@ -282,6 +349,7 @@ int main() {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(150);
                     if(ImGui::InputDouble("##Edit", &ownedAmount  , 0.0, 0.0, "%.6f")) {
+                        // Enforce non-negative holdings.
                         if (ownedAmount < 0.0)
                         {
                             ownedAmount = 0.0;
@@ -297,6 +365,52 @@ int main() {
             }
 
             ImGui::EndTable();
+        }
+
+        // Use a flag to open popups to avoid calling OpenPopup during a Begin/End pair.
+        if(openSearchPopup) {
+            ImGui::OpenPopup("Add Coin");
+            openSearchPopup = false;
+            search_results.clear();
+            memset(search_buffer, 0, sizeof(search_buffer));
+        }
+
+        if(ImGui::BeginPopupModal("Add Coin", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Search CoinGecko (e.g., 'Bitcoin', 'chainlink')");
+            ImGui::InputText("##Search", search_buffer, sizeof(search_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            if(ImGui::Button("Search", ImVec2(120, 0))) {
+                is_searching = true;
+                futureSearch = std::async(std::launch::async, &MarketClient::search_coins, &client, std::string(search_buffer));
+            }
+            ImGui::SameLine();
+
+            if(ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::Separator();
+            ImGui::BeginChild("SearchResult", ImVec2(300, 200), true);
+            for(auto const& res : search_results) {
+                std::string label = std::format("{} ({})", res.name, res.ticker);
+                if(ImGui::Selectable(label.c_str())) {
+                    // Prevent adding a coin that's already in the user's list.
+                    bool exists = false;
+                    for(auto const& existing : coins) {
+                        if(existing.api_id == res.api_id) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if(!exists) {
+                        coins.push_back(res);
+                        save_coins(coins);
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndChild();
+            ImGui::EndPopup();
         }
                 
         ImGui::End(); 

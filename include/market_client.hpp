@@ -4,6 +4,13 @@
 #include <vector>
 #include <map>
 
+/// @brief Maps a user-facing coin name to its API identifier.
+struct CoinDef {
+    std::string name;   // User-friendly name for display, e.g., "Bitcoin".
+    std::string ticker; // Common abbreviation, e.g., "BTC".
+    std::string api_id; // Unique ID for the CoinGecko API, e.g., "bitcoin".
+};
+
 /// @brief Holds all relevant data for a single cryptocurrency.
 struct CoinData
 {
@@ -26,12 +33,28 @@ public:
     /// @return A vector of price points. Returns an empty vector on failure.
     static std::vector<double> parse_history(const std::string& json_body);
 
+    /// @brief Parses a JSON string containing multiple coin prices.
+    /// @param json_body The raw JSON response from the simple/price endpoint.
+    /// @return A map of coin API IDs to their USD price.
+    static std::map<std::string, double> parse_multi_price(const std::string& json_body);
+
+    /// @brief Parses a JSON string from a coin search query.
+    /// @param json_body The raw JSON response from the search endpoint.
+    /// @return A vector of `CoinDef` objects matching the search.
+    static std::vector<CoinDef> parse_search_result(const std::string& json_body);
+
     /// @brief Fetches both the current price and 24-hour history for a coin.
     /// @param coin_id The API identifier for the coin.
     /// @return A complete CoinData object, or nullopt on network/API failure.
     std::optional<CoinData> get_coin_data(const std::string& coin_id);
 
+    /// @brief Fetches the current price for multiple coins in a single request.
+    /// @param coin_ids A vector of API identifiers for the coins.
+    /// @return A map of coin API IDs to their USD price. Returns an empty map on failure.
     std::map<std::string, double> get_multi_price(const std::vector<std::string>& coin_ids);
 
-    std::map<std::string, double> parse_multi_price(const std::string& json_body);
+    /// @brief Searches for coins by name, ticker, or ID.
+    /// @param query The search term.
+    /// @return A vector of `CoinDef` objects matching the query. Returns an empty vector on failure.
+    std::vector<CoinDef> search_coins(const std::string& query);
 };
