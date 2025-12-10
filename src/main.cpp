@@ -94,7 +94,7 @@ std::map<std::string, double> load_portfolio() {
             }
         }
     } catch (...) {
-        // Fail silently if file is corrupt/missing; a new one is created on next save.
+        // Fail gracefully if file is corrupt/missing; a new one is created on next save.
         std::cerr << "Error loading portfolio - No portfolio found (creating new file). \n";
     }
     return portfolio;
@@ -108,7 +108,7 @@ int main() {
     // Prevent excessive CPU usage when the app is idle.
     window.setFramerateLimit(60);
 
-    // Binds the ImGui user interface to the SFML window.
+    // Binds the ImGui context to the SFML window, enabling GUI rendering.
     if(!ImGui::SFML::Init(window)){
         return 1;
     }
@@ -137,6 +137,9 @@ int main() {
     std::vector<double> pieValue;
     double totalNetWorth = 0.0;
 
+    sf::Clock refreshClock;
+    float const REFRESH_INTERVAL = 60.f;
+
     // Initial data fetch for the portfolio overview.
     std::vector<std::string> allIds;
     for(auto const& coin : coins) {
@@ -148,7 +151,7 @@ int main() {
     std::vector<CoinDef> search_results;
     bool is_searching = false;
 
-    bool openSearchPopup = false; // One-shot flag to trigger the search popup.
+    bool openSearchPopup = false; // Use a flag to safely open popups outside of the main ImGui Begin/End block.
 
     // --- Main Application Loop ---
     while(window.isOpen()) {
@@ -165,10 +168,26 @@ int main() {
         }
 
         // --- GUI Update & Drawing ---
-        // Restart the clock and inform ImGui of the time delta for animations and UI responsiveness.
         ImGui::SFML::Update(window, delta_clock.restart());
 
-        // Poll the future without blocking the main thread.
+        // Trigger a data refresh automatically if the interval has passed and no other request is active.
+        if(!is_loading && refreshClock.getElapsedTime().asSeconds() >= REFRESH_INTERVAL) {
+            is_loading = true;
+            status = "Auto-Refreshing...";
+            refreshClock.restart();
+
+            if(selected_index == -1) {
+                allIds.clear();
+                for(auto const& coin : coins)
+                    allIds.push_back(coin.api_id);
+
+                futureBatch = std::async(std::launch::async, &MarketClient::get_multi_price, &client, allIds);
+            } else {
+                futureCoin = std::async(std::launch::async, &MarketClient::get_coin_data, &client, coins[selected_index].api_id);
+            }
+        }
+
+        // Check if the batch price fetch is complete without blocking the main thread.
         if(futureBatch.valid() && futureBatch.wait_for(0s) == std::future_status::ready) {    
             auto price = futureBatch.get();
             pieLabels.clear();
@@ -184,27 +203,27 @@ int main() {
                     totalNetWorth += val;
                 }
             }
-            
             status = "Portfolio Synced.";
-            is_loading = false;  
+            is_loading = false; 
+            refreshClock.restart(); 
         } 
 
-        // Poll the future for single-coin data.
+        // Check if the single coin data fetch is complete.
         if(futureCoin.valid() && futureCoin.wait_for(0s) == std::future_status::ready) {
             try {
                 auto result = futureCoin.get();
                 if(result.has_value()) {
                     current_data = result.value();
                     status = "Updated: " + coins[selected_index].name;
-                    should_reset_axes = true;
                 }
             } catch (...) {
                 status = "Error";
             }
-            is_loading = false;  
+            is_loading = false; 
+            refreshClock.restart(); 
         }
 
-        // Poll the future for search results.
+        // Check if the coin search is complete.
         if(futureSearch.valid() && futureSearch.wait_for(0s) == std::future_status::ready) {
             search_results = futureSearch.get();
             is_searching = false;
@@ -212,7 +231,7 @@ int main() {
 
         // --- DASHBOARD LAYOUT ---
         ImGui::SetNextWindowPos(ImVec2(0, 0));
-        // Ensure the main window always fills the entire application window.
+        // Force the main dashboard window to fill the entire application window.
         ImGui::SetNextWindowSize(ImVec2((float)window.getSize().x, (float)window.getSize().y));
         ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize);
         
@@ -231,7 +250,7 @@ int main() {
 
             ImGui::Separator();
 
-            // A selected index of -1 is used as a sentinel for the main portfolio overview.
+            // Use a selected index of -1 as a sentinel for the main portfolio overview.
             if(ImGui::Selectable(" PORTFOLIO OVERVIEW", selected_index == -1)) {
                 selected_index = -1;
                 is_loading = true;
@@ -250,7 +269,7 @@ int main() {
                 std::string label = amount > 0.00001 ? std::format("{} ({:.2f})", coins[i].ticker, amount) : coins[i].ticker;
                 
                 if(ImGui::Selectable(label.c_str(), selected_index == i)) {
-                    // Prevent re-fetching data for the same selection or while another request is active.
+                    // Fetch data only if a new coin is selected and no other request is active.
                     if(selected_index != i && !is_loading) {
                         selected_index = i;
                         is_loading = true;
@@ -264,6 +283,18 @@ int main() {
 
             // --- Column 2: Main Content (Price & Chart) ---
             ImGui::TableSetColumnIndex(1);
+
+            // Status text on the left, refresh timer on the right
+            ImGui::TextDisabled(status.c_str());
+
+            float timeLeft = REFRESH_INTERVAL - refreshClock.getElapsedTime().asSeconds();
+            if(timeLeft < 0) {
+                timeLeft = 0;
+            }
+            ImGui::SameLine();
+            std::string refresh_text = std::format("Refresh: {:.0f}s", timeLeft);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(refresh_text.c_str()).x);
+            ImGui::TextDisabled(refresh_text.c_str());
 
             if(selected_index == -1) {
                 ImGui::TextColored(ImVec4(0, 1, 0, 1), "Total Worth Net");
@@ -286,7 +317,7 @@ int main() {
                             pieValue.data(), 
                             (int)pieValue.size(), 
                             0.5, 0.5, 0.35,         
-                            "%.1f", 90 
+                            "%.1f%%", 90 // Format as percentage, start angle at 90 degrees (top).
                         );
                         ImPlot::EndPlot();
                     }
@@ -296,8 +327,10 @@ int main() {
                 ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s (%s)", coins[selected_index].name.c_str(), coins[selected_index].ticker.c_str());
                 ImGui::SameLine();
                 
-                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 100);
-                if(ImGui::Button("Delete Coin")) {
+                const char* delete_text = "Delete Coin";
+                float button_width = ImGui::CalcTextSize(delete_text).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - button_width);
+                if(ImGui::Button(delete_text)) {
                     portfolio.erase(c.api_id);
                     save_portfolio(portfolio);
 
@@ -307,8 +340,7 @@ int main() {
                     selected_index = -1;
                 }
 
-                // After deletion, the selected index is invalid.
-                // Bail out of this frame to prevent rendering with stale data.
+                // After deletion, the index is invalid. Bail out of this frame's rendering to prevent a crash.
                 if(selected_index == -1) {
                     ImGui::EndTable();
                     ImGui::End();
@@ -331,6 +363,7 @@ int main() {
                     }
 
                     if(!current_data.price_history.empty()) {
+                        // Auto-fit the plot axes on the first frame after new data arrives.
                         if(should_reset_axes) {
                             ImPlot::SetNextAxesToFit();
                             should_reset_axes = false;
@@ -367,7 +400,7 @@ int main() {
             ImGui::EndTable();
         }
 
-        // Use a flag to open popups to avoid calling OpenPopup during a Begin/End pair.
+        // Trigger popup opening safely outside of a Begin/End pair.
         if(openSearchPopup) {
             ImGui::OpenPopup("Add Coin");
             openSearchPopup = false;
@@ -394,7 +427,7 @@ int main() {
             for(auto const& res : search_results) {
                 std::string label = std::format("{} ({})", res.name, res.ticker);
                 if(ImGui::Selectable(label.c_str())) {
-                    // Prevent adding a coin that's already in the user's list.
+                    // Check if the coin already exists in the portfolio to avoid duplicates.
                     bool exists = false;
                     for(auto const& existing : coins) {
                         if(existing.api_id == res.api_id) {
