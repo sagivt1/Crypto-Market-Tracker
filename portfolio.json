@@ -1,10 +1,30 @@
 {
-    "bitcoin": 1.5,
-    "cardano": 0.0,
-    "cosmos": 1500.0,
-    "dogecoin": 0.0,
-    "ethereum": 0.0,
-    "polkadot": 0.0,
-    "ripple": 20000.0,
-    "solana": 0.0
+    "bitcoin": {
+        "amount": 1.0,
+        "buyPrice": 90000.0
+    },
+    "cardano": {
+        "amount": 0.0,
+        "buyPrice": 0.0
+    },
+    "cosmos": {
+        "amount": 0.0,
+        "buyPrice": 0.0
+    },
+    "ethereum": {
+        "amount": 0.0,
+        "buyPrice": 0.0
+    },
+    "polkadot": {
+        "amount": 0.0,
+        "buyPrice": 0.0
+    },
+    "ripple": {
+        "amount": 15000.0,
+        "buyPrice": 3.0
+    },
+    "solana": {
+        "amount": 0.0,
+        "buyPrice": 0.0
+    }
 }

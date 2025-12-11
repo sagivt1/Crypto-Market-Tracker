@@ -18,6 +18,12 @@
 using namespace std::chrono_literals;
 using json = nlohmann::json;
 
+struct PortfolioEntry {
+    double amount = 0.0;
+    double buyPrice = 0.0;
+};
+
+
 void save_coins(const std::vector<CoinDef>& coins) {
     try{
         json j  = json::array();
@@ -67,11 +73,14 @@ std::vector<CoinDef> load_coins() {
 
 /// @brief Persists the user's asset holdings to a JSON file.
 /// @param portfolio A map of coin API IDs to the amount owned.
-void save_portfolio(const std::map<std::string, double>& portfolio) {
+void save_portfolio(const std::map<std::string, PortfolioEntry>& portfolio) {
     try {
         json j;
-        for(auto const& [key, value] : portfolio) {
-            j[key] = value;
+        for(auto const& [key, entry] : portfolio) {
+            j[key] = {
+                {"amount", entry.amount},
+                {"buyPrice", entry.buyPrice}
+            };
         }
         std::ofstream file("portfolio.json");
         file << j.dump(4); // Use 4-space indentation for readability.
@@ -82,15 +91,18 @@ void save_portfolio(const std::map<std::string, double>& portfolio) {
 
 /// @brief Loads the user's asset holdings from a JSON file.
 /// @return A map of coin API IDs to the amount owned. Returns an empty map if the file doesn't exist or is invalid.
-std::map<std::string, double> load_portfolio() {
-    std::map<std::string, double> portfolio;
+std::map<std::string, PortfolioEntry> load_portfolio() {
+    std::map<std::string, PortfolioEntry> portfolio;
     try {
         std::ifstream file("portfolio.json");
         if(file.is_open()) {
             json j;
             file >> j;
-            for(auto& [key, value] : j.items()) {
-                portfolio[key] = value;
+            for(auto& element : j.items()) {
+               portfolio[element.key()] = {
+                    element.value()["amount"].get<double>(),
+                    element.value()["buyPrice"].get<double>()
+               };
             }
         }
     } catch (...) {
@@ -122,9 +134,10 @@ int main() {
     sf::Clock delta_clock;
 
     std::vector<CoinDef> coins = load_coins();
-    std::map<std::string, double> portfolio = load_portfolio();
+    std::map<std::string, PortfolioEntry> portfolio = load_portfolio();
 
     int selected_index = -1;
+    PortfolioEntry temp_entry;
     bool is_loading = true; // Tracks if a network request is in-flight to prevent duplicate requests.
     bool should_reset_axes = false; // Triggers the plot to rescale after new data arrives.
 
@@ -136,6 +149,7 @@ int main() {
     std::vector<const char*> pieLabels;
     std::vector<double> pieValue;
     double totalNetWorth = 0.0;
+    double totalCostBasis = 0.0;
 
     sf::Clock refreshClock;
     float const REFRESH_INTERVAL = 60.f;
@@ -193,14 +207,21 @@ int main() {
             pieLabels.clear();
             pieValue.clear();
             totalNetWorth = 0.0;
+            totalCostBasis = 0.0;
             for(int i=0; i<coins.size(); i++) {
-                double amount = portfolio[coins[i].api_id];
+                PortfolioEntry& entry = portfolio[coins[i].api_id];
                 // Filter out dust amounts to keep the pie chart clean.
-                if(amount > 0.00001) {
-                    double val = amount * price[coins[i].api_id];
-                    pieLabels.push_back(coins[i].ticker.c_str());
-                    pieValue.push_back(val);
-                    totalNetWorth += val;
+                if(entry.amount > 0.00001) {
+
+                    double currentVal = entry.amount * price[coins[i].api_id];
+                    double costVal = entry.amount * entry.buyPrice;
+
+                    if(currentVal > 0.00001) {
+                        pieLabels.push_back(coins[i].ticker.c_str());
+                        pieValue.push_back(currentVal);
+                        totalNetWorth += currentVal;
+                        totalCostBasis += costVal;
+                    }
                 }
             }
             status = "Portfolio Synced.";
@@ -265,13 +286,14 @@ int main() {
             ImGui::Separator();
 
             for(int i=0; i<coins.size(); i++) {
-                double amount = portfolio[coins[i].api_id];
+                double amount = portfolio[coins[i].api_id].amount;
                 std::string label = amount > 0.00001 ? std::format("{} ({:.2f})", coins[i].ticker, amount) : coins[i].ticker;
                 
                 if(ImGui::Selectable(label.c_str(), selected_index == i)) {
                     // Fetch data only if a new coin is selected and no other request is active.
                     if(selected_index != i && !is_loading) {
                         selected_index = i;
+                        temp_entry = portfolio[coins[i].api_id];
                         is_loading = true;
                         status = "Fetching " + coins[i].name;
                         current_data.price_history.clear();
@@ -302,23 +324,25 @@ int main() {
                 ImGui::Text("$%.2f", totalNetWorth);
                 ImGui::SetWindowFontScale(1.0f);
 
+                // calculate profit and loss
+                double totalPNL = totalNetWorth - totalCostBasis;
+                double totalPNLPercent = (totalCostBasis > 0) ? totalPNL / totalCostBasis * 100.0 : 0.0;
+
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 50);
+                ImGui::BeginGroup();
+                ImGui::Text("Total PNL");
+
+                ImVec4 pnlColor = (totalPNL >= 0) ? ImVec4(0,1,0,1) : ImVec4(1,0,0,1);
+                ImGui::TextColored(pnlColor, "$%.2f (%.2f%%)", totalPNL);
+                ImGui::EndGroup();
+
                 ImGui::Separator();
-                ImGui::Spacing();
-
-                if(pieValue.empty()) {
-                    ImGui::TextDisabled("No assets found. Select a coin to add holdings.");
-                } else {
-                    ImGui::Text("Asset Allocation");
-
+        
+                if(!pieValue.empty()) {
                     if(ImPlot::BeginPlot("##Pie", ImVec2(-1, -1), ImPlotFlags_Equal | ImPlotFlags_NoMouseText)) {
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
-                        ImPlot::PlotPieChart(
-                            pieLabels.data(), 
-                            pieValue.data(), 
-                            (int)pieValue.size(), 
-                            0.5, 0.5, 0.35,         
-                            "%.1f%%", 90 // Format as percentage, start angle at 90 degrees (top).
-                        );
+                        ImPlot::PlotPieChart(pieLabels.data(), pieValue.data(), static_cast<int>(pieValue.size()), 0.5, 0.5, 0.35, "%.1f", 90);
                         ImPlot::EndPlot();
                     }
                 }
@@ -377,26 +401,49 @@ int main() {
 
                     ImGui::Separator();
                     ImGui::TextDisabled("Portfolio");
-                    double ownedAmount = portfolio[coins[selected_index].api_id];
-                    ImGui::Text("Amount Owned");
-                    ImGui::SameLine();
+
+                    // Use temp_entry for editing, commit to portfolio on button press
+
+                    ImGui::Text("Holdings:");
+                    ImGui::SameLine(100);
                     ImGui::SetNextItemWidth(150);
-                    if(ImGui::InputDouble("##Edit", &ownedAmount  , 0.0, 0.0, "%.6f")) {
-                        // Enforce non-negative holdings.
-                        if (ownedAmount < 0.0)
-                        {
-                            ownedAmount = 0.0;
+
+                    if(ImGui::InputDouble("##Amount", &temp_entry.amount, 0.0, 0.0, "%.6f")) {
+                        if (temp_entry.buyPrice == 0.0 && current_data.current_price > 0.0) {
+                            temp_entry.buyPrice = current_data.current_price;
                         }
-                        portfolio[coins[selected_index].api_id] = ownedAmount;
-                        save_portfolio(portfolio);     
                     }
-                    if(current_data.current_price > 0) {
+
+                    ImGui::Text("Avg Buy Price:");
+                    ImGui::SameLine(100);
+                    ImGui::SetNextItemWidth(150);
+                    ImGui::InputDouble("##BuyPrice", &temp_entry.buyPrice, 0.0, 0.0, "%.2f");
+
+                    if(ImGui::Button("Update Portfolio")) {
+                        if(temp_entry.amount < 0) temp_entry.amount = 0;
+                        if(temp_entry.buyPrice < 0) temp_entry.buyPrice = 0;
+                        
+                        portfolio[coins[selected_index].api_id] = temp_entry;
+                        save_portfolio(portfolio);
+                    }
+
+                    // Calculate PNL for specific coin
+                    if (current_data.current_price > 0.0 && temp_entry.amount > 0) {
+                        double currentVal = temp_entry.amount * current_data.current_price;
+                        double costVal = temp_entry.amount * temp_entry.buyPrice;
+                        double pnl = currentVal - costVal;
+                        double pnlPercent = (costVal > 0) ? pnl / costVal * 100.0 : 0.0;
+                        ImGui::Spacing();
+                        ImGui::Text("Current value: $%.2f", currentVal);
                         ImGui::SameLine();
-                        ImGui::Text("$%.2f", ownedAmount * current_data.current_price);
+
+                        ImGui::Text("| PNL: ");
+                        ImGui::SameLine();
+                        ImVec4 color = (pnl >= 0) ? ImVec4(0,1,0,1) : ImVec4(1,0,0,1);
+                        ImGui::TextColored(color, "$%.2f (%.2f%%)", pnl, pnlPercent);
                     }
                 }
             }
-
             ImGui::EndTable();
         }
 
