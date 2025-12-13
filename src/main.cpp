@@ -14,6 +14,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <numeric>
 
 using namespace std::chrono_literals;
 using json = nlohmann::json;
@@ -112,6 +113,44 @@ std::map<std::string, PortfolioEntry> load_portfolio() {
     return portfolio;
 }
 
+// return a vector at the size of period, put nans at the beginning if not enough data. 
+std::vector<double> calculate_sma(const std::vector<double>& prices, int period) {
+
+    if(prices.size() <  period) return {};
+
+    std::vector<double> sma(prices.size());
+
+    for(size_t i=0; i<prices.size(); i++) {
+        if(i < period - 1) {
+            sma[i] = std::numeric_limits<int>::quiet_NaN();
+        } else {
+            auto startItr = prices.begin() + (i - period + 1);
+            auto endItr = prices.begin() + i + 1;
+
+            double sum = std::accumulate(startItr, endItr, 0.0);
+            sma[i] = sum / period;
+        }
+    }
+
+    return sma;
+}
+
+void setup_style() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 5.0f;
+    style.FrameRounding = 4.0f;
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (!io.Fonts->AddFontFromFileTTF("Roboto-Regular.ttf", 18.0f)){
+        io.FontGlobalScale = 1.2f; 
+    }
+
+    ImGui::SFML::UpdateFontTexture();
+
+    // set custom plot color 
+    ImPlot::GetStyle().Colors[ImPlotCol_Line] = ImVec4(0.9f, 0.7f, 0.0f, 1.0f);
+ }
+
 int main() {
 
     // --- Initialization ---
@@ -140,6 +179,16 @@ int main() {
     PortfolioEntry temp_entry;
     bool is_loading = true; // Tracks if a network request is in-flight to prevent duplicate requests.
     bool should_reset_axes = false; // Triggers the plot to rescale after new data arrives.
+
+    // analysis state
+    bool showSmaShort = false;
+    bool showSmaLong = false;
+    std::vector<double> smaShortData;
+    std::vector<double> smaLongData;
+
+    //Temp editor variables
+    double tempAmount = 0.0;
+    double tempBuyPrice = 0.0;
 
     // Futures for managing non-blocking network calls.
     std::future<std::optional<CoinData>> futureCoin;
@@ -235,6 +284,12 @@ int main() {
                 auto result = futureCoin.get();
                 if(result.has_value()) {
                     current_data = result.value();
+
+                    if(!current_data.price_history.empty()) {
+                        smaShortData = calculate_sma(current_data.price_history, 7);
+                        smaLongData = calculate_sma(current_data.price_history, 25);
+                    }
+
                     status = "Updated: " + coins[selected_index].name;
                 }
             } catch (...) {
@@ -387,6 +442,10 @@ int main() {
                     }
 
                     if(!current_data.price_history.empty()) {
+
+                        ImGui::Checkbox("Show SMA-7", &showSmaShort);
+                        ImGui::Checkbox("Show SMA-25", &showSmaLong);
+
                         // Auto-fit the plot axes on the first frame after new data arrives.
                         if(should_reset_axes) {
                             ImPlot::SetNextAxesToFit();
@@ -395,6 +454,17 @@ int main() {
 
                         if(ImPlot::BeginPlot("24H Trend", ImVec2(-1, 350))) {
                             ImPlot::PlotLine("Price (USD)", current_data.price_history.data(), current_data.price_history.size());
+
+                            if(showSmaShort && !smaShortData.empty()) {
+                                ImPlot::SetNextLineStyle(ImVec4(0, 1, 1, 1));
+                                ImPlot::PlotLine("SMA-7", smaShortData.data(), smaShortData.size());
+                            }
+                            if(showSmaLong && !smaLongData.empty()) {
+                                ImPlot::SetNextLineStyle(ImVec4(1, 0, 1, 1));
+                                ImPlot::PlotLine("SMA-7", smaLongData.data(), smaLongData.size());
+                            }
+
+
                             ImPlot::EndPlot();
                         }
                     }
