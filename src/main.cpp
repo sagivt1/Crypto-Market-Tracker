@@ -1,155 +1,21 @@
-
 #include "market_client.hpp"
+#include "persistence.hpp"
+#include "analysis.hpp"
+#include "style.hpp"
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <implot.h>
 #include <SFML/Graphics.hpp>
 #include <SFML/System/Clock.hpp>
 #include <SFML/Window/Event.hpp>
-#include <nlohmann/json.hpp>
 #include <chrono>
 #include <future>
 #include <vector>
 #include <iostream>
 #include <format>
-#include <fstream>
 #include <map>
-#include <numeric>
 
 using namespace std::chrono_literals;
-using json = nlohmann::json;
-
-struct PortfolioEntry {
-    double amount = 0.0;
-    double buyPrice = 0.0;
-};
-
-
-void save_coins(const std::vector<CoinDef>& coins) {
-    try{
-        json j  = json::array();
-        for(auto const& coin : coins) {
-            j.push_back({
-                {"name", coin.name},
-                {"ticker", coin.ticker},
-                {"api_id", coin.api_id}
-            });
-        }
-        std::ofstream file("coins.json");
-        file << j.dump(4); // Use 4-space indentation for readability.
-    } catch(...) {} // Silently fail on file I/O error; not a critical operation.
-}
-
-std::vector<CoinDef> load_coins() {
-    std::vector<CoinDef> coins;
-    try {
-            std::ifstream file("coins.json");
-            
-            if(file.is_open()) {
-                json j;
-                file >> j;
-                for(auto const& coin : j) { 
-                    coins.push_back({
-                        coin["name"],
-                        coin["ticker"],
-                        coin["api_id"]
-                    });
-                }
-            }
-        } catch(...) {} // Silently fail on parse/read error.
-
-    if(coins.empty()) {
-        // If no file exists or it's empty, provide a default list for first-time users.
-        coins = {
-        {"Bitcoin",  "BTC", "bitcoin"},
-        {"Ethereum", "ETH", "ethereum"},
-        {"Solana",   "SOL", "solana"},
-        {"Dogecoin", "DOGE","dogecoin"},
-        {"Cardano",  "ADA", "cardano"},
-        {"Polkadot", "DOT", "polkadot"}
-        };
-    }
-    return coins;
-}
-
-/// @brief Persists the user's asset holdings to a JSON file.
-/// @param portfolio A map of coin API IDs to the amount owned.
-void save_portfolio(const std::map<std::string, PortfolioEntry>& portfolio) {
-    try {
-        json j;
-        for(auto const& [key, entry] : portfolio) {
-            j[key] = {
-                {"amount", entry.amount},
-                {"buyPrice", entry.buyPrice}
-            };
-        }
-        std::ofstream file("portfolio.json");
-        file << j.dump(4); // Use 4-space indentation for readability.
-    } catch (...) {
-        std::cerr << "Error saving portfolio \n";
-    }
-}
-
-/// @brief Loads the user's asset holdings from a JSON file.
-/// @return A map of coin API IDs to the amount owned. Returns an empty map if the file doesn't exist or is invalid.
-std::map<std::string, PortfolioEntry> load_portfolio() {
-    std::map<std::string, PortfolioEntry> portfolio;
-    try {
-        std::ifstream file("portfolio.json");
-        if(file.is_open()) {
-            json j;
-            file >> j;
-            for(auto& element : j.items()) {
-               portfolio[element.key()] = {
-                    element.value()["amount"].get<double>(),
-                    element.value()["buyPrice"].get<double>()
-               };
-            }
-        }
-    } catch (...) {
-        // Fail gracefully if file is corrupt/missing; a new one is created on next save.
-        std::cerr << "Error loading portfolio - No portfolio found (creating new file). \n";
-    }
-    return portfolio;
-}
-
-// return a vector at the size of period, put nans at the beginning if not enough data. 
-std::vector<double> calculate_sma(const std::vector<double>& prices, int period) {
-
-    if(prices.size() <  period) return {};
-
-    std::vector<double> sma(prices.size());
-
-    for(size_t i=0; i<prices.size(); i++) {
-        if(i < period - 1) {
-            sma[i] = std::numeric_limits<int>::quiet_NaN();
-        } else {
-            auto startItr = prices.begin() + (i - period + 1);
-            auto endItr = prices.begin() + i + 1;
-
-            double sum = std::accumulate(startItr, endItr, 0.0);
-            sma[i] = sum / period;
-        }
-    }
-
-    return sma;
-}
-
-void setup_style() {
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 5.0f;
-    style.FrameRounding = 4.0f;
-    ImGuiIO& io = ImGui::GetIO();
-
-    if (!io.Fonts->AddFontFromFileTTF("Roboto-Regular.ttf", 18.0f)){
-        io.FontGlobalScale = 1.2f; 
-    }
-
-    ImGui::SFML::UpdateFontTexture();
-
-    // set custom plot color 
-    ImPlot::GetStyle().Colors[ImPlotCol_Line] = ImVec4(0.9f, 0.7f, 0.0f, 1.0f);
- }
 
 int main() {
 
@@ -459,9 +325,10 @@ int main() {
                                 ImPlot::SetNextLineStyle(ImVec4(0, 1, 1, 1));
                                 ImPlot::PlotLine("SMA-7", smaShortData.data(), smaShortData.size());
                             }
+                            
                             if(showSmaLong && !smaLongData.empty()) {
                                 ImPlot::SetNextLineStyle(ImVec4(1, 0, 1, 1));
-                                ImPlot::PlotLine("SMA-7", smaLongData.data(), smaLongData.size());
+                                ImPlot::PlotLine("SMA-25", smaLongData.data(), smaLongData.size());
                             }
 
 

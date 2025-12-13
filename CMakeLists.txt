@@ -27,6 +27,9 @@ find_package(implot REQUIRED)
 add_library(core_lib
     src/logic.cpp
     src/market_client.cpp
+    src/persistence.cpp
+    src/analysis.cpp
+    src/style.cpp
 )
 # Make the 'include' directory available to core_lib and any targets that link to it.
 target_include_directories(core_lib PUBLIC include)
