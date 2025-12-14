@@ -2,6 +2,7 @@
 #include "persistence.hpp"
 #include "analysis.hpp"
 #include "style.hpp"
+#include "custom_plots.hpp"
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <implot.h>
@@ -31,6 +32,7 @@ int main() {
     }
 
     ImPlot::CreateContext();
+    setup_style();
 
     // --- Application State & Data ---
     MarketClient client;
@@ -46,6 +48,10 @@ int main() {
     bool is_loading = true; // Tracks if a network request is in-flight to prevent duplicate requests.
     bool should_reset_axes = false; // Triggers the plot to rescale after new data arrives.
 
+    // view state
+    int chartMode = 0;
+    bool waiting_for_ohlc = false;
+
     // analysis state
     bool showSmaShort = false;
     bool showSmaLong = false;
@@ -60,6 +66,7 @@ int main() {
     std::future<std::optional<CoinData>> futureCoin;
     std::future<std::map<std::string, double>> futureBatch;
     std::future<std::vector<CoinDef>> futureSearch;
+    std::future<bool> futureOhlc;
 
     std::vector<const char*> pieLabels;
     std::vector<double> pieValue;
@@ -163,6 +170,16 @@ int main() {
             }
             is_loading = false; 
             refreshClock.restart(); 
+        }
+
+        if(waiting_for_ohlc && futureOhlc.valid() && futureOhlc.wait_for(0s) == std::future_status::ready) {
+            bool success = futureOhlc.get();
+            if(success) {
+                status = "OHLC Loaded.";
+                should_reset_axes = true;
+            } else {
+                status = "OHLC Faild (Rate Limit?)";
+            }
         }
 
         // Check if the coin search is complete.
@@ -307,34 +324,64 @@ int main() {
                         ImGui::SetWindowFontScale(1.0f);
                     }
 
-                    if(!current_data.price_history.empty()) {
-
-                        ImGui::Checkbox("Show SMA-7", &showSmaShort);
-                        ImGui::Checkbox("Show SMA-25", &showSmaLong);
-
-                        // Auto-fit the plot axes on the first frame after new data arrives.
-                        if(should_reset_axes) {
-                            ImPlot::SetNextAxesToFit();
-                            should_reset_axes = false;
-                        }
-
-                        if(ImPlot::BeginPlot("24H Trend", ImVec2(-1, 350))) {
-                            ImPlot::PlotLine("Price (USD)", current_data.price_history.data(), current_data.price_history.size());
-
-                            if(showSmaShort && !smaShortData.empty()) {
-                                ImPlot::SetNextLineStyle(ImVec4(0, 1, 1, 1));
-                                ImPlot::PlotLine("SMA-7", smaShortData.data(), smaShortData.size());
-                            }
-                            
-                            if(showSmaLong && !smaLongData.empty()) {
-                                ImPlot::SetNextLineStyle(ImVec4(1, 0, 1, 1));
-                                ImPlot::PlotLine("SMA-25", smaLongData.data(), smaLongData.size());
-                            }
-
-
-                            ImPlot::EndPlot();
+                    ImGui::Text("Chart Type:");
+                    ImGui::SameLine();
+                    if(ImGui::RadioButton("Line", chartMode == 0))
+                        chartMode = 0;
+                    ImGui::SameLine();
+                    if(ImGui::RadioButton("CanadelStick", chartMode == 1)) {
+                        chartMode = 1;
+                        if(current_data.time.empty() && !waiting_for_ohlc) {
+                            waiting_for_ohlc = true;
+                            status = "Fetching OHLC....";
+                            futureOhlc = client.fetch_ohlc_async(coins[selected_index].api_id, current_data);
                         }
                     }
+
+                    if(should_reset_axes) {
+                        ImPlot::SetNextAxesToFit();
+                        should_reset_axes = false;
+                    }
+
+                    if(ImPlot::BeginPlot("Analysis",ImVec2(-1, 350), ImPlotFlags_NoLegend)) {
+                        if(chartMode == 1) {
+                            if(!current_data.time.empty()) {
+                                ImPlot::SetupAxis(ImAxis_X1, nullptr);
+                                ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Time);
+                                PlotCandlestick(
+                                    "OHLC",
+                                    current_data.time.data(),
+                                    current_data.open.data(),
+                                    current_data.close.data(),
+                                    current_data.high.data(),
+                                    current_data.low.data(),
+                                    static_cast<int>(current_data.time.size())
+                                );
+                            } else {
+                                ImGui::Text("Loading Candles...");
+                            }
+                        } else {
+                            if(!current_data.price_history.empty()) {
+                                ImPlot::PlotLine("Price (USD)", current_data.price_history.data(), current_data.price_history.size());
+                                if(showSmaShort && !smaLongData.empty()){
+                                    ImPlot::SetNextLineStyle(ImVec4(0, 1, 1, 1));
+                                    ImPlot::PlotLine("SMA-7", smaShortData.data(), smaShortData.size());
+                                }
+                                if(showSmaLong && !smaLongData.empty()) {
+                                    ImPlot::SetNextLineStyle(ImVec4(1, 0, 1, 1));
+                                    ImPlot::PlotLine("SMA-25", smaLongData.data(), smaLongData.size());
+                                }
+                            }
+                        }
+                        ImPlot::EndPlot();
+                    }
+
+                    if(chartMode == 0) {
+                        ImGui::Checkbox("Show SMA-7", &showSmaShort);
+                        ImGui::SameLine();
+                        ImGui::Checkbox("Show SMA-25", &showSmaLong);
+                    }
+                  
 
                     ImGui::Separator();
                     ImGui::TextDisabled("Portfolio");

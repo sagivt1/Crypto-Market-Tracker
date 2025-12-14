@@ -9,7 +9,8 @@ void setup_style() {
     style.FrameRounding = 4.0f;
     ImGuiIO& io = ImGui::GetIO();
 
-    if (!io.Fonts->AddFontFromFileTTF("Roboto-Regular.ttf", 18.0f)){
+    // If the primary font fails to load, scale the default font as a fallback for readability.
+    if (!io.Fonts->AddFontFromFileTTF("Roboto-Regular.ttf", 18.0f)) {
         io.FontGlobalScale = 1.2f; 
     }
 

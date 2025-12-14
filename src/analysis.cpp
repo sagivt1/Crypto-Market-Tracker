@@ -9,7 +9,8 @@ std::vector<double> calculate_sma(const std::vector<double>& prices, int period)
     std::vector<double> sma(prices.size());
 
     for(size_t i=0; i<prices.size(); i++) {
-        if(i < period - 1) {
+        // For initial values where a full period isn't available, mark as not-a-number to avoid plotting garbage.
+        if (i < period - 1) {
             sma[i] = std::numeric_limits<double>::quiet_NaN();
         } else {
             auto startItr = prices.begin() + (i - period + 1);

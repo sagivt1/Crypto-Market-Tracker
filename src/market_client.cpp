@@ -10,8 +10,8 @@ using json = nlohmann::json;
 
 std::map<std::string, double> MarketClient::get_multi_price(const std::vector<std::string>& coin_ids) {
     std::string joinsIds = "";
-    // The CoinGecko API requires a comma-separated string of coin IDs for batch requests.
-    for( auto const& id : coin_ids) {
+    // Build a comma-separated string of IDs, as required by the batch API endpoint.
+    for (auto const& id : coin_ids) {
         if(!joinsIds.empty())
             joinsIds += ",";
         joinsIds += id;
@@ -103,12 +103,11 @@ std::optional<CoinData> MarketClient::get_coin_data(const std::string& coin_id) 
     auto basic_data = parse_coin_price(r.text, coin_id);
     if(!basic_data) return std::nullopt;
 
-    // If price is fetched, proceed to get 24-hour historical data.
     std::string history_url = std::format("https://api.coingecko.com/api/v3/coins/{}/market_chart?vs_currency=usd&days=1", coin_id);
     cpr::Response history_r = cpr::Get(cpr::Url{history_url}, cpr::VerifySsl(false));
     if(history_r.status_code == 200) {
         basic_data->price_history = parse_history(history_r.text);
-        std::println("Success! Got {} history points.", basic_data->price_history.size()); // DEBUG
+        std::println("Success! Got {} history points for {}.", basic_data->price_history.size(), coin_id); // DEBUG
     }
     else {
         std::println(stderr, "History Error [{}]: Status {}", coin_id, history_r.status_code);
@@ -159,4 +158,54 @@ std::vector<CoinDef> MarketClient::search_coins(const std::string& query) {
 
     std::println(stderr, "Search Error: Status {}", r.status_code);
     return {};
+}
+
+void MarketClient::parse_ohlc(const std::string& json_body, CoinData& data) {
+    try {
+        auto parsed = json::parse(json_body);
+
+        data.time.clear();
+        data.open.clear();
+        data.high.clear();
+        data.low.clear();
+        data.close.clear();
+
+        if(parsed.is_array()) {
+            for(auto const& candle : parsed) {
+                // Defensive check against malformed data points from the API.
+                if(candle.size() >= 5) {
+                    // Convert API's millisecond timestamp to seconds.
+                    data.time.push_back(candle[0].get<double>() / 1000.0); // [0] is timestamp
+                    data.open.push_back(candle[1].get<double>());
+                    data.high.push_back(candle[2].get<double>());
+                    data.low.push_back(candle[3].get<double>());
+                    data.close.push_back(candle[4].get<double>());
+                }
+            }
+        }
+    } catch(...) {
+        // Silently fail on parse error.
+    }
+}
+
+bool MarketClient::fetch_ohlc(const std::string& coin_id, CoinData& data) {
+    std::println("Fetching OHLC for: {}", coin_id);
+
+    std::string url = std::format("https://api.coingecko.com/api/v3/coins/{}/ohlc?vs_currency=usd&days=1", coin_id);
+    cpr::Response r = cpr::Get(cpr::Url{url}, cpr::VerifySsl(false));
+
+    if(r.status_code == 200) {
+        parse_ohlc(r.text, data);
+        return true;
+    }
+
+    std::println(stderr, "OHLC Error [{}]: Status {}", coin_id, r.status_code);
+    return false;
+
+}
+
+std::future<bool> MarketClient::fetch_ohlc_async(const std::string& coin_id, CoinData& data) {
+    return std::async(std::launch::async, [this, coin_id, &data]() {
+        return this->fetch_ohlc(coin_id, data);
+    });
 }

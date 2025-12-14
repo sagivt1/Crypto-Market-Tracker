@@ -30,6 +30,7 @@ add_library(core_lib
     src/persistence.cpp
     src/analysis.cpp
     src/style.cpp
+    src/custom_plots.cpp
 )
 # Make the 'include' directory available to core_lib and any targets that link to it.
 target_include_directories(core_lib PUBLIC include)

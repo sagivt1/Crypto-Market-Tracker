@@ -3,6 +3,7 @@
 #include <optional>
 #include <vector>
 #include <map>
+#include <future>
 
 /// @brief Maps a user-facing coin name to its API identifier.
 struct CoinDef {
@@ -17,6 +18,11 @@ struct CoinData
     std::string id;
     double current_price;
     std::vector<double> price_history;
+    std::vector<double> time;
+    std::vector<double> open;
+    std::vector<double> high;
+    std::vector<double> low;
+    std::vector<double> close;
 };
 
 /// @brief A client for interacting with the CoinGecko cryptocurrency API.
@@ -57,4 +63,17 @@ public:
     /// @param query The search term.
     /// @return A vector of `CoinDef` objects matching the query. Returns an empty vector on failure.
     std::vector<CoinDef> search_coins(const std::string& query);
+
+    /// @brief Parses a JSON string to extract OHLC (Open, High, Low, Close) data.
+    /// @param json_body The raw JSON response from the ohlc endpoint.
+    /// @param data The CoinData object to populate with OHLC values.
+    static void parse_ohlc(const std::string& json_body, CoinData& data);
+
+    /// @brief Fetches OHLC (Open, High, Low, Close) data for a coin for a specific period.
+    /// @param coin_id The API identifier for the coin.
+    /// @param data The CoinData object to populate with the fetched data.
+    /// @return True on success, false on network/API failure.
+    bool fetch_ohlc(const std::string& coin_id, CoinData& data);
+
+    std::future<bool> fetch_ohlc_async(const std::string& coin_id, CoinData& data);
 };
