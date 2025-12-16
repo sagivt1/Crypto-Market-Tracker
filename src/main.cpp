@@ -399,7 +399,7 @@ int main() {
                     }
 
                     ImGui::Text("Avg Buy Price:");
-                    ImGui::SameLine(100);
+                    ImGui::SameLine(135);
                     ImGui::SetNextItemWidth(150);
                     ImGui::InputDouble("##BuyPrice", &temp_entry.buyPrice, 0.0, 0.0, "%.2f");
 
