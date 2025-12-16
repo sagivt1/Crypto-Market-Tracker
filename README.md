@@ -102,5 +102,5 @@ build/Release/unit_tests.exe
 **Note:** The exact path and executable name may vary on non-Windows operating systems (e.g., `./build/unit_tests` on Linux/macOS).
 
 ## 📜 License
-
+This project is licensed under the MIT License. See the `LICENSE` file for more details.
 
