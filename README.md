@@ -103,4 +103,4 @@ build/Release/unit_tests.exe
 
 ## 📜 License
 
-This project is not currently licensed. Please add a `LICENSE` file to define the terms under which this software can be used, modified, and distributed.
+
