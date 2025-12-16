@@ -21,7 +21,7 @@ A C++ desktop application for tracking and visualizing cryptocurrency market dat
 
 ## 🖼️ Screenshot
 
-![Portfolio Preview](screenshot/portfolio.png)
+![Portfolio Preview](screenshot/Portfolio.png)
 ![Coin Preview](screenshot/CoinPage.png)
 
 ## 🛠️ Dependencies & Prerequisites
